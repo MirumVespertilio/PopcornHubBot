@@ -35,6 +35,28 @@ AGE_LIMITS = [
     ("🤷 Любой", "age_any"),
 ]
 
+MOODS = [
+    ("😊 Хочу посмеяться", "mood_happy", "весёлое"),
+    ("😢 Хочу поплакать", "mood_sad", "грустное"),
+    ("🤔 Хочу подумать", "mood_thoughtful", "заставляющее думать"),
+    ("😱 Хочу испугаться", "mood_scared", "страшное"),
+    ("💪 Хочу вдохновиться", "mood_inspired", "вдохновляющее"),
+    ("😴 Хочу расслабиться", "mood_relaxed", "расслабляющее"),
+    ("🎬 Хочу захватывающее", "mood_excited", "захватывающее"),
+    ("🤷 Любое настроение", "mood_any", "любое"),
+]
+
+YEAR_RANGES = [
+    ("2020-2025", "year_2020_2025", "2020-2025"),
+    ("2010-2019", "year_2010_2019", "2010-2019"),
+    ("2000-2009", "year_2000_2009", "2000-2009"),
+    ("1990-1999", "year_1990_1999", "1990-1999"),
+    ("1980-1989", "year_1980_1989", "1980-1989"),
+    ("1970-1979", "year_1970_1979", "1970-1979"),
+    ("До 1970", "year_before_1970", "до 1970"),
+    ("🤷 Любой год", "year_any", "любой"),
+]
+
 
 def build_genre_keyboard(selected_genres: list[str]) -> InlineKeyboardMarkup:
     """Создаёт клавиатуру выбора жанров с отметками выбранных."""
@@ -171,8 +193,24 @@ async def genre_selection_handler(callback: CallbackQuery, state: FSMContext):
     if callback.data == "genre_any_genre":
         await state.update_data(selected_genres=["любой"])
         if isinstance(callback.message, Message):
-            await callback.message.edit_text(text="✅ Выбран: Любой жанр")
-        await state.set_state(Preferences.choosing_rating)
+            await callback.message.delete()
+
+        # Create mood keyboard
+        mood_kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=mood_text, callback_data=mood_callback)]
+                for mood_text, mood_callback, _ in MOODS
+            ]
+        )
+
+        if callback.bot and isinstance(callback.message, Message):
+            await callback.bot.send_message(
+                chat_id=callback.message.chat.id,
+                text="🎭 Какое у тебя сейчас настроение?",
+                reply_markup=mood_kb
+            )
+        await state.set_state(Preferences.choosing_mood)
         await callback.answer("Выбран любой жанр")
         return
 
@@ -184,8 +222,24 @@ async def genre_selection_handler(callback: CallbackQuery, state: FSMContext):
 
         genres_text = ", ".join(selected_genres)
         if isinstance(callback.message, Message):
-            await callback.message.edit_text(text=f"✅ Выбраны жанры: {genres_text}")
-        await state.set_state(Preferences.choosing_rating)
+            await callback.message.delete()
+
+        # Create mood keyboard
+        mood_kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=mood_text, callback_data=mood_callback)]
+                for mood_text, mood_callback, _ in MOODS
+            ]
+        )
+
+        if callback.bot and isinstance(callback.message, Message):
+            await callback.bot.send_message(
+                chat_id=callback.message.chat.id,
+                text="🎭 Какое у тебя сейчас настроение?",
+                reply_markup=mood_kb
+            )
+        await state.set_state(Preferences.choosing_mood)
         await callback.answer()
         return
 
@@ -219,4 +273,69 @@ async def genre_selection_handler(callback: CallbackQuery, state: FSMContext):
 
     if isinstance(callback.message, Message):
         await callback.message.edit_text(text=status_text, reply_markup=genre_kb)
+    await callback.answer()
+
+
+@router.callback_query(Preferences.choosing_mood, F.data.startswith("mood_"))
+async def mood_chosen(callback: CallbackQuery, state: FSMContext):
+    if not callback.data or not callback.message:
+        await callback.answer()
+        return
+
+    # Delete the mood selection message
+    if isinstance(callback.message, Message):
+        await callback.message.delete()
+
+    # Map callback data to mood value
+    mood_map = {
+        mood_callback: mood_value for _, mood_callback, mood_value in MOODS
+    }
+    mood = mood_map.get(callback.data, "любое")
+    await state.update_data(mood=mood)
+
+    # Create year keyboard
+    year_kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=year_text, callback_data=year_callback)]
+            for year_text, year_callback, _ in YEAR_RANGES
+        ]
+    )
+
+    if callback.bot and isinstance(callback.message, Message):
+        await callback.bot.send_message(
+            chat_id=callback.message.chat.id,
+            text="📅 Выбери период выпуска:",
+            reply_markup=year_kb
+        )
+
+    await state.set_state(Preferences.choosing_year)
+    await callback.answer()
+
+
+@router.callback_query(Preferences.choosing_year, F.data.startswith("year_"))
+async def year_chosen(callback: CallbackQuery, state: FSMContext):
+    if not callback.data or not callback.message:
+        await callback.answer()
+        return
+
+    # Delete the year selection message
+    if isinstance(callback.message, Message):
+        await callback.message.delete()
+
+    # Map callback data to year value
+    year_map = {
+        year_callback: year_value for _, year_callback, year_value in YEAR_RANGES
+    }
+    year = year_map.get(callback.data, "любой")
+    await state.update_data(year=year)
+
+    # Year selection complete - ready for search
+    if callback.bot and isinstance(callback.message, Message):
+        await callback.bot.send_message(
+            chat_id=callback.message.chat.id,
+            text=f"✅ Период выбран: {year}\n\nВсе параметры выбраны! Готов к поиску."
+        )
+
+    # Clear state or keep it for search - adjust based on your needs
+    # await state.clear()
     await callback.answer()
