@@ -1,10 +1,11 @@
 import asyncio
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
 from config import config
 from handlers import routers
 
 
-dp = Dispatcher()
+dp = Dispatcher(storage=MemoryStorage())
 
 
 for router in routers:
