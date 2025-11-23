@@ -6,7 +6,7 @@ from states import Preferences
 
 router = Router()
 
-# Константы для жанров
+# Константы для жанров (отображаемый текст, callback_data, название жанра)
 GENRES = [
     ("🎭 Драма", "genre_drama", "Драма"),
     ("🤣 Комедия", "genre_comedy", "Комедия"),
@@ -20,12 +20,14 @@ GENRES = [
     ("🏰 Мультфильмы", "genre_cartoon", "Мультфильмы"),
 ]
 
+# Словарь соответствия callback_data типу контента
 CONTENT_TYPES = {
     "want_movie": "фильм",
     "want_series": "сериал",
     "dont_know": "любой"
 }
 
+# Возрастные рейтинги (отображаемый текст, callback_data)
 AGE_LIMITS = [
     ("0+", "age_0"),
     ("6+", "age_6"),
@@ -35,6 +37,7 @@ AGE_LIMITS = [
     ("🤷 Любой", "age_any"),
 ]
 
+# Настроения (отображаемый текст, callback_data, значение настроения)
 MOODS = [
     ("😊 Хочу посмеяться", "mood_happy", "весёлое"),
     ("😢 Хочу поплакать", "mood_sad", "грустное"),
@@ -46,6 +49,7 @@ MOODS = [
     ("🤷 Любое настроение", "mood_any", "любое"),
 ]
 
+# Периоды выпуска (отображаемый текст, callback_data, значение периода)
 YEAR_RANGES = [
     ("2020-2025", "year_2020_2025", "2020-2025"),
     ("2010-2019", "year_2010_2019", "2010-2019"),
@@ -76,14 +80,15 @@ def build_genre_keyboard(selected_genres: list[str]) -> InlineKeyboardMarkup:
 
 @router.callback_query(F.data == "search_by_preferences")
 async def search_by_preferences_handler(callback: CallbackQuery, state: FSMContext):
+    """Обработчик начала поиска по предпочтениям. Запускает процесс выбора параметров."""
     if not callback.message or not isinstance(callback.message, Message):
         await callback.answer("Ошибка: Сообщение не найдено", show_alert=True)
         return
 
-    # Store chat_id before deleting
+    # Сохраняем chat_id перед удалением (на случай, если понадобится)
     chat_id = callback.message.chat.id
 
-    # Delete the welcome message
+    # Удаляем приветственное сообщение
     await callback.message.delete()
 
     inline_kb = InlineKeyboardMarkup(
@@ -113,6 +118,7 @@ async def search_by_preferences_handler(callback: CallbackQuery, state: FSMConte
 
 @router.callback_query(Preferences.choosing_type, F.data.in_(["want_movie", "want_series", "dont_know"]))
 async def content_type_chosen(callback: CallbackQuery, state: FSMContext):
+    """Обработчик выбора типа контента (фильм/сериал/не знаю)."""
     if not callback.data or not callback.message:
         await callback.answer()
         return
@@ -121,10 +127,12 @@ async def content_type_chosen(callback: CallbackQuery, state: FSMContext):
     if isinstance(callback.message, Message):
         await callback.message.delete()
 
+    # Получаем тип контента из словаря
     content_type = CONTENT_TYPES[callback.data]
+    # Сохраняем тип контента и инициализируем пустой список выбранных жанров
     await state.update_data(content_type=content_type, selected_genres=[])
 
-    # Create age limit keyboard
+    # Создаём клавиатуру выбора возрастного рейтинга
     age_kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=age_text, callback_data=age_callback)]
@@ -132,7 +140,7 @@ async def content_type_chosen(callback: CallbackQuery, state: FSMContext):
         ]
     )
 
-    # Send new message using bot instance
+    # Отправляем новое сообщение через экземпляр бота
     if callback.bot and isinstance(callback.message, Message):
         await callback.bot.send_message(
             chat_id=callback.message.chat.id,
@@ -146,15 +154,16 @@ async def content_type_chosen(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(Preferences.choosing_age_limit, F.data.startswith("age_"))
 async def age_limit_chosen(callback: CallbackQuery, state: FSMContext):
+    """Обработчик выбора возрастного рейтинга."""
     if not callback.data or not callback.message:
         await callback.answer()
         return
 
-    # Delete the age limit selection message
+    # Удаляем сообщение выбора возрастного рейтинга
     if isinstance(callback.message, Message):
         await callback.message.delete()
 
-    # Map callback data to age limit value
+    # Преобразуем callback data в значение возрастного рейтинга
     age_map = {
         "age_0": "0+",
         "age_6": "6+",
@@ -164,11 +173,13 @@ async def age_limit_chosen(callback: CallbackQuery, state: FSMContext):
         "age_any": "любой"
     }
     age_limit = age_map.get(callback.data, "любой")
+    # Сохраняем выбранный возрастной рейтинг
     await state.update_data(age_limit=age_limit)
 
+    # Создаём клавиатуру выбора жанров (пока без выбранных жанров)
     genre_kb = build_genre_keyboard([])
 
-    # Send new message using bot instance
+    # Отправляем новое сообщение через экземпляр бота
     if callback.bot and isinstance(callback.message, Message):
         await callback.bot.send_message(
             chat_id=callback.message.chat.id,
@@ -182,20 +193,23 @@ async def age_limit_chosen(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(Preferences.choosing_genre, F.data.startswith("genre_"))
 async def genre_selection_handler(callback: CallbackQuery, state: FSMContext):
+    """Обработчик выбора жанров. Поддерживает множественный выбор и переключение."""
     if not callback.data or not callback.message:
         await callback.answer()
         return
 
+    # Получаем текущие данные состояния и список выбранных жанров
     data = await state.get_data()
     selected_genres = data.get("selected_genres", [])
 
     # Обработка "Любой жанр"
     if callback.data == "genre_any_genre":
+        # Сохраняем "любой" как выбранный жанр
         await state.update_data(selected_genres=["любой"])
         if isinstance(callback.message, Message):
             await callback.message.delete()
 
-        # Create mood keyboard
+        # Создаём клавиатуру выбора настроения
         mood_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(
@@ -216,6 +230,7 @@ async def genre_selection_handler(callback: CallbackQuery, state: FSMContext):
 
     # Обработка "Готово"
     if callback.data == "genre_done":
+        # Проверяем, что хотя бы один жанр выбран
         if not selected_genres:
             await callback.answer("Выбери хотя бы один жанр или выбери 'Любой жанр'", show_alert=True)
             return
@@ -224,7 +239,7 @@ async def genre_selection_handler(callback: CallbackQuery, state: FSMContext):
         if isinstance(callback.message, Message):
             await callback.message.delete()
 
-        # Create mood keyboard
+        # Создаём клавиатуру выбора настроения
         mood_kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(
@@ -244,6 +259,7 @@ async def genre_selection_handler(callback: CallbackQuery, state: FSMContext):
         return
 
     # Обработка выбора конкретного жанра
+    # Создаём словарь для преобразования callback_data в название жанра
     genre_map = {
         callback_data: genre_name for _,
         callback_data, genre_name in GENRES
@@ -254,17 +270,19 @@ async def genre_selection_handler(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    # Переключаем жанр (добавляем или удаляем)
+    # Переключаем жанр (добавляем или удаляем из списка)
     if genre_name in selected_genres:
         selected_genres.remove(genre_name)
     else:
         selected_genres.append(genre_name)
 
+    # Сохраняем обновлённый список выбранных жанров
     await state.update_data(selected_genres=selected_genres)
 
-    # Обновляем клавиатуру и сообщение
+    # Обновляем клавиатуру и сообщение с актуальным списком выбранных жанров
     genre_kb = build_genre_keyboard(selected_genres)
 
+    # Формируем текст сообщения в зависимости от количества выбранных жанров
     if selected_genres:
         genres_list = ", ".join(selected_genres)
         status_text = f"📌 Выбрано жанров: {len(selected_genres)}\n{genres_list}\n\nВыбери ещё или нажми 'Готово':"
@@ -278,22 +296,24 @@ async def genre_selection_handler(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(Preferences.choosing_mood, F.data.startswith("mood_"))
 async def mood_chosen(callback: CallbackQuery, state: FSMContext):
+    """Обработчик выбора настроения."""
     if not callback.data or not callback.message:
         await callback.answer()
         return
 
-    # Delete the mood selection message
+    # Удаляем сообщение выбора настроения
     if isinstance(callback.message, Message):
         await callback.message.delete()
 
-    # Map callback data to mood value
+    # Преобразуем callback data в значение настроения
     mood_map = {
         mood_callback: mood_value for _, mood_callback, mood_value in MOODS
     }
     mood = mood_map.get(callback.data, "любое")
+    # Сохраняем выбранное настроение
     await state.update_data(mood=mood)
 
-    # Create year keyboard
+    # Создаём клавиатуру выбора периода выпуска
     year_kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=year_text, callback_data=year_callback)]
@@ -314,28 +334,28 @@ async def mood_chosen(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(Preferences.choosing_year, F.data.startswith("year_"))
 async def year_chosen(callback: CallbackQuery, state: FSMContext):
+    """Обработчик выбора периода выпуска. Завершает процесс выбора параметров."""
     if not callback.data or not callback.message:
         await callback.answer()
         return
 
-    # Delete the year selection message
+    # Удаляем сообщение выбора периода выпуска
     if isinstance(callback.message, Message):
         await callback.message.delete()
 
-    # Map callback data to year value
+    # Преобразуем callback data в значение периода выпуска
     year_map = {
         year_callback: year_value for _, year_callback, year_value in YEAR_RANGES
     }
     year = year_map.get(callback.data, "любой")
+    # Сохраняем выбранный период выпуска
     await state.update_data(year=year)
 
-    # Year selection complete - ready for search
+    # Выбор периода завершён - все параметры выбраны, готов к поиску
     if callback.bot and isinstance(callback.message, Message):
         await callback.bot.send_message(
             chat_id=callback.message.chat.id,
             text=f"✅ Период выбран: {year}\n\nВсе параметры выбраны! Готов к поиску."
         )
 
-    # Clear state or keep it for search - adjust based on your needs
-    # await state.clear()
     await callback.answer()
