@@ -1,7 +1,9 @@
 from aiogram import Router, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
 from states import Preferences
+from services.search_service import search_service
+from utils.formatters import format_single_result
 
 
 router = Router()
@@ -351,11 +353,181 @@ async def year_chosen(callback: CallbackQuery, state: FSMContext):
     # Сохраняем выбранный период выпуска
     await state.update_data(year=year)
 
-    # Выбор периода завершён - все параметры выбраны, готов к поиску
+    # Получаем все собранные данные из состояния
+    data = await state.get_data()
+    content_type = data.get("content_type", "любой")
+    selected_genres = data.get("selected_genres", [])
+    mood = data.get("mood", "любое")
+    age_limit = data.get("age_limit", "любой")
+
+    # Инициализируем search_message как None
+    search_message = None
+
+    # Отправляем сообщение о начале поиска
     if callback.bot and isinstance(callback.message, Message):
-        await callback.bot.send_message(
+        search_message = await callback.bot.send_message(
             chat_id=callback.message.chat.id,
-            text=f"✅ Период выбран: {year}\n\nВсе параметры выбраны! Готов к поиску."
+            text="🔍 Ищу подходящие фильмы и сериалы..."
         )
+
+    try:
+        # Формируем словарь предпочтений для поиска
+        preferences = {
+            "content_type": content_type,
+            "genres": selected_genres,
+            "year": year,
+            "mood": mood,  # Для будущего использования с GroqAI
+            "age_limit": age_limit  # Для будущего использования
+        }
+
+        # Выполняем поиск
+        results = await search_service.search_by_preferences(preferences)
+
+        if not results:
+            # Удаляем сообщение "Ищу..."
+            if callback.bot and isinstance(callback.message, Message):
+                if search_message:
+                    try:
+                        await search_message.delete()
+                    except Exception:
+                        pass
+
+                await callback.bot.send_message(
+                    chat_id=callback.message.chat.id,
+                    text="😔 К сожалению, ничего не найдено. Попробуйте изменить параметры поиска."
+                )
+            await state.clear()
+            return
+
+        # Ограничиваем количество результатов
+        max_results = 20
+        display_results = results[:max_results]
+        total_count = len(display_results)
+
+        # Сохраняем результаты и текущий индекс в состоянии
+        await state.update_data(
+            results=display_results,
+            current_index=0,
+            total_count=total_count
+        )
+
+        # Форматируем первый результат
+        result = display_results[0]
+        text, poster_url, keyboard = format_single_result(
+            result, 0, total_count)
+
+        # Удаляем сообщение "Ищу..." и отправляем результаты
+        if callback.bot and isinstance(callback.message, Message):
+            # Пытаемся удалить сообщение "Ищу..." (обрабатываем ошибку)
+            if search_message:
+                try:
+                    await search_message.delete()
+                except Exception:
+                    pass  # Игнорируем ошибку, если сообщение уже удалено
+
+            # Отправляем результат с постером
+            if poster_url:
+                await callback.bot.send_photo(
+                    chat_id=callback.message.chat.id,
+                    photo=poster_url,
+                    caption=text,
+                    reply_markup=keyboard
+                )
+            else:
+                await callback.bot.send_message(
+                    chat_id=callback.message.chat.id,
+                    text=text,
+                    reply_markup=keyboard
+                )
+
+        # Переходим в состояние просмотра результатов
+        await state.set_state(Preferences.viewing_results)
+
+    except Exception as e:
+        print(f"Ошибка при поиске по предпочтениям: {e}")
+        if callback.bot and isinstance(callback.message, Message):
+            # Пытаемся удалить сообщение "Ищу..." (обрабатываем ошибку)
+            if search_message:
+                try:
+                    await search_message.delete()
+                except Exception:
+                    pass  # Игнорируем ошибку, если сообщение уже удалено
+
+            await callback.bot.send_message(
+                chat_id=callback.message.chat.id,
+                text="😔 Произошла ошибка при поиске. Попробуйте позже или измените параметры."
+            )
+        await state.clear()
+
+
+@router.callback_query(Preferences.viewing_results, F.data.in_(["result_prev", "result_next"]))
+async def navigate_preferences_results(callback: CallbackQuery, state: FSMContext):
+    """Обработчик навигации по результатам поиска по предпочтениям"""
+    if not callback.message or not isinstance(callback.message, Message) or not callback.data:
+        await callback.answer()
+        return
+
+    data = await state.get_data()
+    results = data.get("results", [])
+    current_index = data.get("current_index", 0)
+    total_count = data.get("total_count", len(results))
+
+    if not results:
+        await callback.answer("Результаты не найдены", show_alert=True)
+        return
+
+    # Определяем направление навигации
+    if callback.data == "result_prev":
+        new_index = current_index - 1
+    elif callback.data == "result_next":
+        new_index = current_index + 1
+    else:
+        await callback.answer()
+        return
+
+    # Проверяем границы
+    if new_index < 0 or new_index >= total_count:
+        await callback.answer()
+        return
+
+    # Обновляем индекс
+    await state.update_data(current_index=new_index)
+
+    # Получаем новый результат
+    result = results[new_index]
+    text, poster_url, keyboard = format_single_result(
+        result, new_index, total_count)
+
+    # Обновляем сообщение
+    try:
+        if poster_url:
+            await callback.message.edit_media(
+                media=InputMediaPhoto(media=poster_url, caption=text),
+                reply_markup=keyboard
+            )
+        else:
+            await callback.message.edit_text(
+                text=text,
+                reply_markup=keyboard
+            )
+    except Exception as e:
+        print(f"Ошибка при обновлении сообщения: {e}")
+        # Если не удалось обновить, отправляем новое
+        if callback.bot and isinstance(callback.message, Message):
+            if poster_url:
+                await callback.bot.send_photo(
+                    chat_id=callback.message.chat.id,
+                    photo=poster_url,
+                    caption=text,
+                    reply_markup=keyboard
+                )
+            else:
+                await callback.bot.send_message(
+                    chat_id=callback.message.chat.id,
+                    text=text,
+                    reply_markup=keyboard
+                )
+
+    await callback.answer()
 
     await callback.answer()

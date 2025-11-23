@@ -7,4 +7,10 @@ class Preferences(StatesGroup):
     choosing_genre = State()
     choosing_mood = State()
     choosing_year = State()
+    viewing_results = State()
     # choosing_rating = State()
+
+
+class SearchByName(StatesGroup):
+    waiting_for_query = State()
+    viewing_results = State()
