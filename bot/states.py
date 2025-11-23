@@ -14,3 +14,8 @@ class Preferences(StatesGroup):
 class SearchByName(StatesGroup):
     waiting_for_query = State()
     viewing_results = State()
+
+
+class ReportError(StatesGroup):
+    choosing_category = State()
+    waiting_for_description = State()

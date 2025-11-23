@@ -1,6 +1,41 @@
 from typing import List, Dict, Any, Tuple
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+# Маппинг ISO кодов на названия стран
+COUNTRY_NAMES = {
+    "US": "США",
+    "GB": "Великобритания",
+    "RU": "Россия",
+    "FR": "Франция",
+    "DE": "Германия",
+    "IT": "Италия",
+    "ES": "Испания",
+    "CA": "Канада",
+    "AU": "Австралия",
+    "JP": "Япония",
+    "KR": "Южная Корея",
+    "CN": "Китай",
+    "IN": "Индия",
+    "BR": "Бразилия",
+    "MX": "Мексика",
+}
+
+
+def format_countries(country_codes: List[str]) -> str:
+    """Форматирование списка ISO кодов стран в читаемый формат"""
+    if not country_codes:
+        return "Неизвестно"
+
+    # Преобразуем коды в названия
+    # Показываем максимум 3 страны
+    names = [COUNTRY_NAMES.get(code, code) for code in country_codes[:3]]
+    result = ", ".join(names)
+
+    if len(country_codes) > 3:
+        result += f" и ещё {len(country_codes) - 3}"
+
+    return result
+
 
 def format_search_result(result: Dict[str, Any]) -> str:
     """

@@ -80,6 +80,31 @@ def build_genre_keyboard(selected_genres: list[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def build_age_limit_keyboard(selected_age_limits: list[str]) -> InlineKeyboardMarkup:
+    """Создаёт клавиатуру выбора возрастных рейтингов с отметками выбранных."""
+    # Маппинг callback_data в значения рейтингов
+    age_map = {
+        "age_0": "0+",
+        "age_6": "6+",
+        "age_12": "12+",
+        "age_16": "16+",
+        "age_18": "18+",
+        "age_any": "любой"
+    }
+
+    buttons = []
+    for age_text, age_callback in AGE_LIMITS:
+        age_value = age_map.get(age_callback, "")
+        text = f"✅ {age_text}" if age_value in selected_age_limits else age_text
+        buttons.append([InlineKeyboardButton(
+            text=text, callback_data=age_callback)])
+
+    buttons.append([InlineKeyboardButton(
+        text="✅ Готово", callback_data="age_done")])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 @router.callback_query(F.data == "search_by_preferences")
 async def search_by_preferences_handler(callback: CallbackQuery, state: FSMContext):
     """Обработчик начала поиска по предпочтениям. Запускает процесс выбора параметров."""
@@ -131,22 +156,17 @@ async def content_type_chosen(callback: CallbackQuery, state: FSMContext):
 
     # Получаем тип контента из словаря
     content_type = CONTENT_TYPES[callback.data]
-    # Сохраняем тип контента и инициализируем пустой список выбранных жанров
-    await state.update_data(content_type=content_type, selected_genres=[])
+    # Сохраняем тип контента и инициализируем пустые списки выбранных жанров и рейтингов
+    await state.update_data(content_type=content_type, selected_genres=[], selected_age_limits=[])
 
-    # Создаём клавиатуру выбора возрастного рейтинга
-    age_kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=age_text, callback_data=age_callback)]
-            for age_text, age_callback in AGE_LIMITS
-        ]
-    )
+    # Создаём клавиатуру выбора возрастного рейтинга (пока без выбранных рейтингов)
+    age_kb = build_age_limit_keyboard([])
 
     # Отправляем новое сообщение через экземпляр бота
     if callback.bot and isinstance(callback.message, Message):
         await callback.bot.send_message(
             chat_id=callback.message.chat.id,
-            text="🎯 Выбери возрастной рейтинг:",
+            text="🎯 Выбери один или несколько возрастных рейтингов:",
             reply_markup=age_kb
         )
 
@@ -156,14 +176,14 @@ async def content_type_chosen(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(Preferences.choosing_age_limit, F.data.startswith("age_"))
 async def age_limit_chosen(callback: CallbackQuery, state: FSMContext):
-    """Обработчик выбора возрастного рейтинга."""
+    """Обработчик выбора возрастного рейтинга. Поддерживает множественный выбор и переключение."""
     if not callback.data or not callback.message:
         await callback.answer()
         return
 
-    # Удаляем сообщение выбора возрастного рейтинга
-    if isinstance(callback.message, Message):
-        await callback.message.delete()
+    # Получаем текущие данные состояния и список выбранных рейтингов
+    data = await state.get_data()
+    selected_age_limits = data.get("selected_age_limits", [])
 
     # Преобразуем callback data в значение возрастного рейтинга
     age_map = {
@@ -175,21 +195,73 @@ async def age_limit_chosen(callback: CallbackQuery, state: FSMContext):
         "age_any": "любой"
     }
     age_limit = age_map.get(callback.data, "любой")
-    # Сохраняем выбранный возрастной рейтинг
-    await state.update_data(age_limit=age_limit)
 
-    # Создаём клавиатуру выбора жанров (пока без выбранных жанров)
-    genre_kb = build_genre_keyboard([])
+    # Обработка "Готово"
+    if callback.data == "age_done":
+        # Проверяем, что хотя бы один рейтинг выбран
+        if not selected_age_limits:
+            await callback.answer("Выбери хотя бы один возрастной рейтинг", show_alert=True)
+            return
 
-    # Отправляем новое сообщение через экземпляр бота
-    if callback.bot and isinstance(callback.message, Message):
-        await callback.bot.send_message(
-            chat_id=callback.message.chat.id,
-            text="📌 Выбери один или несколько жанров:",
-            reply_markup=genre_kb
-        )
+        # Проверяем, есть ли среди выбранных рейтингов 16+ или 18+ для показа предупреждения
+        has_warning = "16+" in selected_age_limits or "18+" in selected_age_limits
 
-    await state.set_state(Preferences.choosing_genre)
+        if isinstance(callback.message, Message):
+            await callback.message.delete()
+
+        # Создаём клавиатуру выбора жанров (пока без выбранных жанров)
+        genre_kb = build_genre_keyboard([])
+
+        # Формируем текст сообщения с предупреждением, если нужно
+        genre_text = "📌 Выбери один или несколько жанров:"
+        if has_warning:
+            if "16+" in selected_age_limits and "18+" not in selected_age_limits:
+                genre_text += "\n\n⚠️ <i>Примечание: рейтинги основаны на системе TMDB и могут отличаться от российских.</i>"
+            elif "18+" in selected_age_limits:
+                genre_text += "\n\n⚠️ <i>Примечание: рейтинги основаны на системе TMDB и могут отличаться от российских.</i>"
+
+        # Отправляем новое сообщение через экземпляр бота
+        if callback.bot and isinstance(callback.message, Message):
+            await callback.bot.send_message(
+                chat_id=callback.message.chat.id,
+                text=genre_text,
+                reply_markup=genre_kb,
+                parse_mode="HTML" if has_warning else None
+            )
+
+        await state.set_state(Preferences.choosing_genre)
+        await callback.answer()
+        return
+
+    # Обработка выбора конкретного рейтинга
+    # Если выбран "любой", очищаем список и добавляем только "любой"
+    if age_limit == "любой":
+        selected_age_limits = ["любой"]
+    else:
+        # Переключаем рейтинг (добавляем или удаляем из списка)
+        if age_limit in selected_age_limits:
+            selected_age_limits.remove(age_limit)
+        else:
+            # Если в списке есть "любой", удаляем его
+            if "любой" in selected_age_limits:
+                selected_age_limits.remove("любой")
+            selected_age_limits.append(age_limit)
+
+    # Сохраняем обновлённый список выбранных рейтингов
+    await state.update_data(selected_age_limits=selected_age_limits)
+
+    # Обновляем клавиатуру и сообщение с актуальным списком выбранных рейтингов
+    age_kb = build_age_limit_keyboard(selected_age_limits)
+
+    # Формируем текст сообщения в зависимости от количества выбранных рейтингов
+    if selected_age_limits:
+        limits_list = ", ".join(selected_age_limits)
+        status_text = f"🎯 Выбрано рейтингов: {len(selected_age_limits)}\n{limits_list}\n\nВыбери ещё или нажми 'Готово':"
+    else:
+        status_text = "🎯 Выбери один или несколько возрастных рейтингов:"
+
+    if isinstance(callback.message, Message):
+        await callback.message.edit_text(text=status_text, reply_markup=age_kb)
     await callback.answer()
 
 
@@ -358,7 +430,10 @@ async def year_chosen(callback: CallbackQuery, state: FSMContext):
     content_type = data.get("content_type", "любой")
     selected_genres = data.get("selected_genres", [])
     mood = data.get("mood", "любое")
-    age_limit = data.get("age_limit", "любой")
+    selected_age_limits = data.get("selected_age_limits", [])
+    # Для обратной совместимости, если selected_age_limits пуст, используем "любой"
+    if not selected_age_limits:
+        selected_age_limits = ["любой"]
 
     # Инициализируем search_message как None
     search_message = None
@@ -377,7 +452,7 @@ async def year_chosen(callback: CallbackQuery, state: FSMContext):
             "genres": selected_genres,
             "year": year,
             "mood": mood,  # Для будущего использования с GroqAI
-            "age_limit": age_limit  # Для будущего использования
+            "age_limits": selected_age_limits  # Список выбранных рейтингов
         }
 
         # Выполняем поиск
@@ -527,7 +602,5 @@ async def navigate_preferences_results(callback: CallbackQuery, state: FSMContex
                     text=text,
                     reply_markup=keyboard
                 )
-
-    await callback.answer()
 
     await callback.answer()

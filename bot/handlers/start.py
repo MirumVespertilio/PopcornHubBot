@@ -1,11 +1,11 @@
 from aiogram import Router
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import CommandStart
+from aiogram.filters import Command
 
 router = Router()
 
 
-@router.message(CommandStart)
+@router.message(Command("start"))
 async def cmd_start(msg: Message):
     if msg.from_user is None:
         user_name = ""

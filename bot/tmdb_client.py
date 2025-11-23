@@ -1,9 +1,13 @@
 import aiohttp
+import asyncio
 from typing import Optional, List, Dict, Any
 from config import config
 
 BASE_URL = "https://api.themoviedb.org/3"
 IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
+
+# Таймауты для запросов
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10)
 
 
 class TMDBClient:
@@ -12,6 +16,18 @@ class TMDBClient:
     def __init__(self):
         self.api_key = config.tmdb_api_key
         self.language = 'ru-RU'
+        self._session: Optional[aiohttp.ClientSession] = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Получить или создать сессию для запросов"""
+        if self._session is None or self._session.closed:
+            # Ограничиваем количество одновременных соединений
+            connector = aiohttp.TCPConnector(limit=10, limit_per_host=5)
+            self._session = aiohttp.ClientSession(
+                connector=connector,
+                timeout=REQUEST_TIMEOUT
+            )
+        return self._session
 
     async def _make_request(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict]:
         """Выполнить запрос к TMDB API"""
@@ -23,17 +39,25 @@ class TMDBClient:
 
         url = f"{BASE_URL}{endpoint}"
 
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(url, params=params) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    else:
-                        print(f"Ошибка API: {response.status}")
-                        return None
-            except Exception as e:
-                print(f"Ошибка запроса: {e}")
-                return None
+        session = await self._get_session()
+        try:
+            async with session.get(url, params=params) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    print(f"Ошибка API: {response.status}")
+                    return None
+        except asyncio.TimeoutError:
+            print(f"Таймаут запроса: {endpoint}")
+            return None
+        except Exception as e:
+            print(f"Ошибка запроса: {e}")
+            return None
+
+    async def close(self):
+        """Закрыть сессию"""
+        if self._session and not self._session.closed:
+            await self._session.close()
 
     async def search_movie(self, query: str, page: int = 1) -> List[Dict[str, Any]]:
         """Поиск фильмов по названию"""
@@ -61,6 +85,8 @@ class TMDBClient:
         year: Optional[int] = None,
         year_gte: Optional[int] = None,
         year_lte: Optional[int] = None,
+        certification: Optional[str] = None,
+        certification_country: Optional[str] = None,
         page: int = 1
     ) -> List[Dict[str, Any]]:
         """Поиск фильмов по параметрам"""
@@ -74,6 +100,10 @@ class TMDBClient:
             params["primary_release_date.gte"] = f"{year_gte}-01-01"
         if year_lte:
             params["primary_release_date.lte"] = f"{year_lte}-12-31"
+        if certification and certification_country:
+            # Используем указанный рейтинг и страну для фильтрации
+            params["certification"] = certification
+            params["certification_country"] = certification_country
 
         data = await self._make_request("/discover/movie", params)
         if data and "results" in data:
@@ -86,6 +116,8 @@ class TMDBClient:
         year: Optional[int] = None,
         year_gte: Optional[int] = None,
         year_lte: Optional[int] = None,
+        certification: Optional[str] = None,
+        certification_country: Optional[str] = None,
         page: int = 1
     ) -> List[Dict[str, Any]]:
         """Поиск сериалов по параметрам"""
@@ -99,6 +131,10 @@ class TMDBClient:
             params["first_air_date.gte"] = f"{year_gte}-01-01"
         if year_lte:
             params["first_air_date.lte"] = f"{year_lte}-12-31"
+        if certification and certification_country:
+            # Для сериалов используем content_ratings с указанной страной
+            params["certification"] = certification
+            params["certification_country"] = certification_country
 
         data = await self._make_request("/discover/tv", params)
         if data and "results" in data:
@@ -119,7 +155,7 @@ class TMDBClient:
             "backdrop_path": movie_data.get("backdrop_path", ""),
             "vote_average": movie_data.get("vote_average", 0),
             "vote_count": movie_data.get("vote_count", 0),
-            "genres": [],  # Будет заполнено при детальном запросе
+            "genres": [],
             "type": "movie"
         }
 
@@ -137,7 +173,7 @@ class TMDBClient:
             "backdrop_path": tv_data.get("backdrop_path", ""),
             "vote_average": tv_data.get("vote_average", 0),
             "vote_count": tv_data.get("vote_count", 0),
-            "genres": [],  # Будет заполнено при детальном запросе
+            "genres": [],
             "type": "tv"
         }
 
@@ -157,6 +193,62 @@ class TMDBClient:
             "Мультфильмы": 16,
         }
         return genre_map.get(genre_name)
+
+    @staticmethod
+    def format_countries(country_codes: List[str]) -> str:
+        """Форматирование списка ISO кодов стран в читаемый формат"""
+        if not country_codes:
+            return "Неизвестно"
+
+        # Маппинг ISO кодов на названия стран
+        country_names = {
+            "US": "США",
+            "GB": "Великобритания",
+            "RU": "Россия",
+            "FR": "Франция",
+            "DE": "Германия",
+            "IT": "Италия",
+            "ES": "Испания",
+            "CA": "Канада",
+            "AU": "Австралия",
+            "JP": "Япония",
+            "KR": "Южная Корея",
+            "CN": "Китай",
+            "IN": "Индия",
+            "BR": "Бразилия",
+            "MX": "Мексика",
+        }
+
+        # Преобразуем коды в названия
+        # Показываем максимум 3 страны
+        names = [country_names.get(code, code) for code in country_codes[:3]]
+        result = ", ".join(names)
+
+        if len(country_codes) > 3:
+            result += f" и ещё {len(country_codes) - 3}"
+
+        return result
+
+    @staticmethod
+    def age_limit_to_certification(age_limit: str) -> tuple[Optional[str], Optional[str]]:
+        """
+        Преобразует русский возрастной рейтинг в формат TMDB API с указанием страны
+
+        Args:
+            age_limit: Русский рейтинг ("0+", "6+", "12+", "16+", "18+", "любой")
+
+        Returns:
+            Кортеж (certification, country) для TMDB API или (None, None)
+        """
+        age_map = {
+            "0+": ("G", "US"),
+            "6+": ("PG", "US"),
+            "12+": ("PG-13", "US"),
+            "16+": ("16+", "RU"),
+            "18+": ("18", "RU"),
+            "любой": (None, None)
+        }
+        return age_map.get(age_limit, (None, None))
 
     @staticmethod
     def parse_year_range(year_range: str) -> tuple[Optional[int], Optional[int]]:
