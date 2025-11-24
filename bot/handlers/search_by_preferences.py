@@ -2,6 +2,7 @@ from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
 from states import Preferences
+from services.mood_ranker import MAX_RANKED_RESULTS, mood_ranker
 from services.search_service import search_service
 from utils.formatters import format_single_result, format_watch_providers
 from tmdb_client import tmdb_client
@@ -493,8 +494,32 @@ async def year_chosen(callback: CallbackQuery, state: FSMContext):
             return
 
         # Ограничиваем количество результатов
-        max_results = 20
-        display_results = results[:max_results]
+        display_results = results[:MAX_RANKED_RESULTS]
+
+        # Ранжируем по настроению при необходимости
+        ranked_results = display_results
+        mood_normalized = (mood or "").strip().lower()
+        mood_message = None
+
+        if mood_normalized not in ("", "любое") and callback.bot and isinstance(callback.message, Message):
+            try:
+                mood_message = await callback.bot.send_message(
+                    chat_id=callback.message.chat.id,
+                    text="✨ Учитываю настроение..."
+                )
+            except Exception:
+                mood_message = None
+
+        if mood_normalized not in ("", "любое"):
+            ranked_results = await mood_ranker.rank_by_mood(display_results, mood)
+
+        if mood_message:
+            try:
+                await mood_message.delete()
+            except Exception:
+                pass
+
+        display_results = ranked_results[:MAX_RANKED_RESULTS]
         total_count = len(display_results)
 
         # Сохраняем результаты, текущий индекс и предпочтения в состоянии
