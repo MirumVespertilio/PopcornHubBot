@@ -136,7 +136,6 @@ async def process_description(message: Message, state: FSMContext):
         f"🔴 Отчет об ошибке\n\n"
         f"📂 Категория: {data.get('category', 'Не указана')}\n"
         f"👤 Пользователь: @{message.from_user.username or 'N/A'}\n"
-        f"🆔 ID: {message.from_user.id}\n"
         f"📄 Описание:\n{message.text}"
     )
 
