@@ -3,7 +3,8 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, C
 from aiogram.fsm.context import FSMContext
 from states import Preferences
 from services.search_service import search_service
-from utils.formatters import format_single_result
+from utils.formatters import format_single_result, format_watch_providers
+from tmdb_client import tmdb_client
 
 
 router = Router()
@@ -76,6 +77,8 @@ def build_genre_keyboard(selected_genres: list[str]) -> InlineKeyboardMarkup:
         text="🤷 Любой жанр", callback_data="genre_any_genre")])
     buttons.append([InlineKeyboardButton(
         text="✅ Готово", callback_data="genre_done")])
+    buttons.append([InlineKeyboardButton(
+        text="❌ Отмена", callback_data="cancel_search")])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -101,6 +104,8 @@ def build_age_limit_keyboard(selected_age_limits: list[str]) -> InlineKeyboardMa
 
     buttons.append([InlineKeyboardButton(
         text="✅ Готово", callback_data="age_done")])
+    buttons.append([InlineKeyboardButton(
+        text="❌ Отмена", callback_data="cancel_search")])
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -131,6 +136,10 @@ async def search_by_preferences_handler(callback: CallbackQuery, state: FSMConte
             [
                 InlineKeyboardButton(
                     text="🤷 Пока не знаю", callback_data="dont_know"
+                )],
+            [
+                InlineKeyboardButton(
+                    text="❌ Отмена", callback_data="cancel_search"
                 )]
         ]
     )
@@ -289,6 +298,9 @@ async def genre_selection_handler(callback: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(
                     text=mood_text, callback_data=mood_callback)]
                 for mood_text, mood_callback, _ in MOODS
+            ] + [
+                [InlineKeyboardButton(
+                    text="❌ Отмена", callback_data="cancel_search")]
             ]
         )
 
@@ -319,6 +331,9 @@ async def genre_selection_handler(callback: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(
                     text=mood_text, callback_data=mood_callback)]
                 for mood_text, mood_callback, _ in MOODS
+            ] + [
+                [InlineKeyboardButton(
+                    text="❌ Отмена", callback_data="cancel_search")]
             ]
         )
 
@@ -392,6 +407,9 @@ async def mood_chosen(callback: CallbackQuery, state: FSMContext):
         inline_keyboard=[
             [InlineKeyboardButton(text=year_text, callback_data=year_callback)]
             for year_text, year_callback, _ in YEAR_RANGES
+        ] + [
+            [InlineKeyboardButton(
+                text="❌ Отмена", callback_data="cancel_search")]
         ]
     )
 
@@ -479,11 +497,12 @@ async def year_chosen(callback: CallbackQuery, state: FSMContext):
         display_results = results[:max_results]
         total_count = len(display_results)
 
-        # Сохраняем результаты и текущий индекс в состоянии
+        # Сохраняем результаты, текущий индекс и предпочтения в состоянии
         await state.update_data(
             results=display_results,
             current_index=0,
-            total_count=total_count
+            total_count=total_count,
+            preferences=preferences
         )
 
         # Форматируем первый результат
@@ -603,4 +622,151 @@ async def navigate_preferences_results(callback: CallbackQuery, state: FSMContex
                     reply_markup=keyboard
                 )
 
+    await callback.answer()
+
+
+@router.callback_query(Preferences.viewing_results, F.data == "finish_search")
+async def finish_preferences_search_handler(callback: CallbackQuery, state: FSMContext):
+    """Обработчик завершения поиска по предпочтениям - показывает стриминговые сервисы"""
+    if not callback.message or not isinstance(callback.message, Message):
+        await callback.answer("Ошибка: Сообщение не найдено", show_alert=True)
+        return
+
+    data = await state.get_data()
+    results = data.get("results", [])
+    current_index = data.get("current_index", 0)
+
+    if not results or current_index >= len(results):
+        await callback.answer("Результаты не найдены", show_alert=True)
+        return
+
+    # Получаем текущий результат
+    result = results[current_index]
+    content_id = result.get("id")
+    content_type = result.get("type", "movie")  # "movie" или "tv"
+    title = result.get("title", "Без названия")
+
+    # Отправляем сообщение о загрузке
+    if callback.bot and isinstance(callback.message, Message):
+        loading_msg = await callback.bot.send_message(
+            chat_id=callback.message.chat.id,
+            text="🔍 Ищу доступные стриминговые сервисы..."
+        )
+    else:
+        loading_msg = None
+
+    try:
+        # Получаем информацию о стриминговых сервисах
+        providers_data = await tmdb_client.get_watch_providers(
+            content_id=content_id,
+            content_type=content_type,
+            country="RU"
+        )
+
+        # Удаляем сообщение о загрузке
+        if loading_msg:
+            try:
+                await loading_msg.delete()
+            except Exception:
+                pass
+
+        # Форматируем и отправляем список сервисов
+        text, keyboard = format_watch_providers(providers_data, title)
+
+        # Удаляем текущее сообщение с результатом
+        if callback.bot and isinstance(callback.message, Message):
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+
+            # Отправляем сообщение со списком сервисов
+            await callback.bot.send_message(
+                chat_id=callback.message.chat.id,
+                text=text,
+                reply_markup=keyboard
+            )
+
+    except Exception as e:
+        print(f"Ошибка при получении стриминговых сервисов: {e}")
+        # Удаляем сообщение о загрузке
+        if loading_msg:
+            try:
+                await loading_msg.delete()
+            except Exception:
+                pass
+
+        # Отправляем сообщение об ошибке
+        text, keyboard = format_watch_providers(None, title)
+        if callback.bot and isinstance(callback.message, Message):
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await callback.bot.send_message(
+                chat_id=callback.message.chat.id,
+                text=text,
+                reply_markup=keyboard
+            )
+
+    await callback.answer()
+
+
+@router.callback_query(Preferences.viewing_results, F.data == "back_to_search")
+async def back_to_preferences_search_handler(callback: CallbackQuery, state: FSMContext):
+    """Обработчик возврата к результатам поиска по предпочтениям"""
+    if not callback.message or not isinstance(callback.message, Message):
+        await callback.answer("Ошибка: Сообщение не найдено", show_alert=True)
+        return
+
+    data = await state.get_data()
+    results = data.get("results", [])
+    current_index = data.get("current_index", 0)
+    total_count = data.get("total_count", len(results))
+
+    if not results:
+        await callback.answer("Результаты поиска не найдены", show_alert=True)
+        return
+
+    # Получаем текущий результат
+    result = results[current_index]
+    text, poster_url, keyboard = format_single_result(
+        result, current_index, total_count)
+
+    # Удаляем текущее сообщение
+    if callback.bot and isinstance(callback.message, Message):
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+
+        # Отправляем результат
+        if poster_url:
+            await callback.bot.send_photo(
+                chat_id=callback.message.chat.id,
+                photo=poster_url,
+                caption=text,
+                reply_markup=keyboard
+            )
+        else:
+            await callback.bot.send_message(
+                chat_id=callback.message.chat.id,
+                text=text,
+                reply_markup=keyboard
+            )
+
+    # Восстанавливаем состояние просмотра результатов
+    await state.set_state(Preferences.viewing_results)
+    await callback.answer()
+
+
+@router.callback_query(Preferences.choosing_type, F.data == "cancel_search")
+@router.callback_query(Preferences.choosing_age_limit, F.data == "cancel_search")
+@router.callback_query(Preferences.choosing_genre, F.data == "cancel_search")
+@router.callback_query(Preferences.choosing_mood, F.data == "cancel_search")
+@router.callback_query(Preferences.choosing_year, F.data == "cancel_search")
+async def cancel_preferences_search_handler(callback: CallbackQuery, state: FSMContext):
+    """Обработчик отмены поиска по предпочтениям из любого состояния"""
+    from handlers.start import show_main_menu
+    await show_main_menu(callback, state)
     await callback.answer()

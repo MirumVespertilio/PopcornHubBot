@@ -273,6 +273,34 @@ class TMDBClient:
 
         return None, None
 
+    async def get_watch_providers(
+        self,
+        content_id: int,
+        content_type: str,
+        country: str = "RU"
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Получить информацию о стриминговых сервисах для фильма или сериала
+
+        Args:
+            content_id: ID фильма или сериала в TMDB
+            content_type: "movie" или "tv"
+            country: Код страны (по умолчанию "RU" для России)
+
+        Returns:
+            Словарь с данными о провайдерах для указанной страны или None
+        """
+        if content_type not in ["movie", "tv"]:
+            return None
+
+        endpoint = f"/{content_type}/{content_id}/watch/providers"
+        data = await self._make_request(endpoint)
+
+        if data and "results" in data and country in data["results"]:
+            return data["results"][country]
+
+        return None
+
 
 # Создаём глобальный экземпляр клиента
 tmdb_client = TMDBClient()

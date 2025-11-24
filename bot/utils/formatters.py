@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # Маппинг ISO кодов на названия стран
@@ -219,24 +219,45 @@ def format_single_result(result: Dict[str, Any], current_index: int, total_count
         text_parts = base_parts + [f"\n{overview}"]
 
     # Создаём клавиатуру навигации
-    keyboard_buttons = []
+    keyboard_rows = []
+
+    # Первая строка: кнопки навигации
+    nav_buttons = []
 
     # Кнопка "Назад" (влево)
     if current_index > 0:
-        keyboard_buttons.append(InlineKeyboardButton(
+        nav_buttons.append(InlineKeyboardButton(
             text="◀️ Назад",
             callback_data="result_prev"
         ))
 
     # Кнопка "Вперёд" (вправо)
     if current_index < total_count - 1:
-        keyboard_buttons.append(InlineKeyboardButton(
+        nav_buttons.append(InlineKeyboardButton(
             text="Вперёд ▶️",
             callback_data="result_next"
         ))
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[keyboard_buttons] if keyboard_buttons else [])
+    if nav_buttons:
+        keyboard_rows.append(nav_buttons)
+
+    # Вторая строка: кнопка "Завершить поиск"
+    keyboard_rows.append([
+        InlineKeyboardButton(
+            text="✅ Завершить поиск",
+            callback_data="finish_search"
+        )
+    ])
+
+    # Третья строка: кнопка "Отмена"
+    keyboard_rows.append([
+        InlineKeyboardButton(
+            text="❌ Отмена",
+            callback_data="cancel_search"
+        )
+    ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
     return "\n".join(text_parts), poster_url, keyboard
 
@@ -262,3 +283,109 @@ def format_result_for_callback(result: Dict[str, Any]) -> str:
             year = release_date
 
     return f"{content_type} {title} ({year})" if year else f"{content_type} {title}"
+
+
+# Маппинг названий провайдеров для русского языка
+PROVIDER_NAMES = {
+    "Netflix": "Netflix",
+    "Okko": "Okko",
+    "IVI": "IVI",
+    "Kinopoisk HD": "Кинопоиск HD",
+    "more.tv": "more.tv",
+    "Premier": "Premier",
+    "Megogo": "Megogo",
+    "Apple TV": "Apple TV",
+    "YouTube": "YouTube",
+    "YouTube Premium": "YouTube Premium",
+    "Amazon Prime Video": "Amazon Prime Video",
+    "Disney Plus": "Disney+",
+    "HBO Max": "HBO Max",
+    "START": "START",
+    "Amediateka": "Amediateka",
+}
+
+
+def format_watch_providers(providers_data: Optional[Dict[str, Any]], title: str) -> Tuple[str, InlineKeyboardMarkup]:
+    """
+    Форматирование списка стриминговых сервисов для отображения
+
+    Args:
+        providers_data: Словарь с данными о провайдерах из TMDB API
+        title: Название фильма/сериала
+
+    Returns:
+        Кортеж: (текст сообщения, клавиатура с кнопками)
+    """
+    if not providers_data:
+        text = (
+            f"📺 {title}\n\n"
+            "😔 К сожалению, информация о доступных стриминговых сервисах не найдена."
+        )
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="◀️ Вернуться к поиску", callback_data="back_to_search")],
+                [InlineKeyboardButton(
+                    text="🏠 В главное меню", callback_data="back_to_main")]
+            ]
+        )
+        return text, keyboard
+
+    text_parts = [f"📺 {title}", "", "🎬 Где посмотреть:"]
+
+    # Подписки (flatrate)
+    flatrate = providers_data.get("flatrate", [])
+    if flatrate:
+        text_parts.append("\n📱 Подписки:")
+        provider_names = []
+        for provider in flatrate[:10]:  # Ограничиваем до 10 сервисов
+            provider_name = provider.get("provider_name", "")
+            display_name = PROVIDER_NAMES.get(provider_name, provider_name)
+            provider_names.append(display_name)
+        text_parts.append(" • " + "\n • ".join(provider_names))
+
+    # Аренда (rent)
+    rent = providers_data.get("rent", [])
+    if rent:
+        text_parts.append("\n💰 Аренда:")
+        provider_names = []
+        for provider in rent[:10]:
+            provider_name = provider.get("provider_name", "")
+            display_name = PROVIDER_NAMES.get(provider_name, provider_name)
+            provider_names.append(display_name)
+        text_parts.append(" • " + "\n • ".join(provider_names))
+
+    # Покупка (buy)
+    buy = providers_data.get("buy", [])
+    if buy:
+        text_parts.append("\n💳 Покупка:")
+        provider_names = []
+        for provider in buy[:10]:
+            provider_name = provider.get("provider_name", "")
+            display_name = PROVIDER_NAMES.get(provider_name, provider_name)
+            provider_names.append(display_name)
+        text_parts.append(" • " + "\n • ".join(provider_names))
+
+    # Если нет ни одного провайдера
+    if not flatrate and not rent and not buy:
+        text_parts.append(
+            "\n😔 К сожалению, информация о доступных сервисах не найдена.")
+
+    # Добавляем ссылку на TMDB, если есть
+    link = providers_data.get("link", "")
+    if link:
+        text_parts.append(f"\n🔗 Подробнее: {link}")
+
+    text = "\n".join(text_parts)
+
+    # Создаём клавиатуру
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text="◀️ Вернуться к поиску", callback_data="back_to_search")],
+            [InlineKeyboardButton(text="🏠 В главное меню",
+                                  callback_data="back_to_main")]
+        ]
+    )
+
+    return text, keyboard
