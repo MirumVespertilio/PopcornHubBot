@@ -81,15 +81,32 @@ def create_app():
         logger.info(f"HTTP {request.method} {request.path_qs}")
         try:
             response = await handler(request)
-            logger.info(
-                f"HTTP {request.method} {request.path_qs} -> {response.status}")
+            # Логируем только успешные запросы и ошибки, кроме 404 (это нормально для health checks)
+            if response.status == 404:
+                logger.debug(
+                    f"HTTP {request.method} {request.path_qs} -> 404 (Not Found)")
+            else:
+                logger.info(
+                    f"HTTP {request.method} {request.path_qs} -> {response.status}")
             return response
+        except web.HTTPNotFound:
+            # 404 - это нормально, не логируем как ошибку
+            logger.debug(
+                f"HTTP {request.method} {request.path_qs} -> 404 (Not Found)")
+            raise
         except Exception as e:
             logger.error(
                 f"Ошибка при обработке HTTP запроса {request.path_qs}: {e}", exc_info=True)
             raise
 
     app.middlewares.append(log_requests)
+
+    # Health check endpoint для Render/UptimeRobot
+    async def health_check(request):
+        return web.Response(text="OK", status=200)
+
+    app.router.add_get('/', health_check)
+    app.router.add_head('/', health_check)
 
     # Регистрируем обработчик вебхука
     logger.info(f"Регистрирую обработчик вебхука по пути: {WEBHOOK_PATH}")
@@ -104,10 +121,6 @@ if __name__ == "__main__":
     print("WEBHOOK_URL:", WEBHOOK_URL)
     print("WEBHOOK_PATH:", WEBHOOK_PATH)
     logger.info("Запуск приложения...")
-
-    # Явно устанавливаем вебхук перед запуском сервера
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(on_startup(bot))
 
     app = create_app()
     web.run_app(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
