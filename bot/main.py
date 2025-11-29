@@ -28,8 +28,7 @@ dp = Dispatcher(storage=MemoryStorage())
 # Middleware для логирования всех апдейтов
 
 
-@dp.update.outer_middleware()
-async def log_updates_middleware(handler, event: Update, data):
+async def log_updates_middleware(handler, event, data):
     """Логирование всех входящих апдейтов"""
     logger.info(
         f"Получен апдейт: update_id={event.update_id}, type={event.event_type}")
@@ -41,6 +40,8 @@ async def log_updates_middleware(handler, event: Update, data):
         logger.error(
             f"Ошибка при обработке апдейта {event.update_id}: {e}", exc_info=True)
         raise
+
+dp.update.outer_middleware.register(log_updates_middleware)
 
 for router in routers:
     dp.include_router(router)
