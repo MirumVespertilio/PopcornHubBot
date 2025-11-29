@@ -7,7 +7,8 @@ from config import config
 from handlers import routers
 
 
-WEBHOOK_PATH = config.webhook_base_url + config.webhook_path
+WEBHOOK_PATH = config.webhook_path
+WEBHOOK_URL = config.webhook_base_url.rstrip("/") + WEBHOOK_PATH
 
 
 dp = Dispatcher(storage=MemoryStorage())
@@ -19,7 +20,7 @@ for router in routers:
 bot = Bot(config.bot_token)
 
 async def on_startup(bot: Bot):
-    await bot.set_webhook(WEBHOOK_PATH)
+    await bot.set_webhook(WEBHOOK_URL)
 
 
 async def on_shutdown(bot: Bot):
