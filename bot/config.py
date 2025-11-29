@@ -10,11 +10,15 @@ class Config(BaseModel):
     tmdb_api_key: str
     gemini_api_key: str = Field(default="")
     reports_chat_id: int = Field(default=0)
+    webhook_base_url: str = Field(default="")
+    webhook_path: str
 
 
 config = Config(
     bot_token=getenv("BOT_TOKEN") or "",
     tmdb_api_key=getenv("TMDB_API_KEY") or "",
     gemini_api_key=getenv("GEMINI_API_KEY") or "",
-    reports_chat_id=int(getenv("REPORTS_CHAT_ID") or "0")
+    reports_chat_id=int(getenv("REPORTS_CHAT_ID") or "0"),
+    webhook_base_url=str(getenv("WEBHOOK_BASE_URL") or ""),
+    webhook_path=str(getenv("WEBHOOK_PATH") or "")
 )
