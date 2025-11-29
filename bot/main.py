@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -46,6 +47,13 @@ async def on_shutdown(bot: Bot):
         logger.error(f"Ошибка при удалении вебхука: {e}", exc_info=True)
 
 
+async def init_app():
+    """Инициализация приложения с явной установкой вебхука"""
+    logger.info("Инициализация приложения...")
+    await on_startup(bot)
+    return create_app()
+
+
 def create_app():
     app = web.Application()
     SimpleRequestHandler(dp, bot).register(app, path=WEBHOOK_PATH)
@@ -57,6 +65,11 @@ def create_app():
 if __name__ == "__main__":
     print("WEBHOOK_URL:", WEBHOOK_URL)
     print("WEBHOOK_PATH:", WEBHOOK_PATH)
+    logger.info("Запуск приложения...")
+
+    # Явно устанавливаем вебхук перед запуском сервера
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(on_startup(bot))
 
     app = create_app()
     web.run_app(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
