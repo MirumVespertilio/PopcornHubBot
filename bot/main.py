@@ -107,7 +107,6 @@ def create_app():
         return web.Response(text="OK", status=200)
 
     app.router.add_get('/', health_check)
-    app.router.add_head('/', health_check)
 
     # Регистрируем обработчик вебхука
     logger.info(f"Регистрирую обработчик вебхука по пути: {WEBHOOK_PATH}")
