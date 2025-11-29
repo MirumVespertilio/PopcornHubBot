@@ -19,12 +19,20 @@
 ## Структура проекта
 ```
 bot/
- ├─ main.py                # Точка входа, конфигурация Dispatcher
- ├─ config.py              # Чтение .env и валидация переменных
- ├─ handlers/              # Aiogram-роутеры: старт, поиск, отчёты
- ├─ services/              # TMDB search, Gemini, ранжирование по настроению
+ ├─ main.py                # Точка входа, webhook-сервер на aiohttp
+ ├─ config.py              # Чтение .env и валидация переменных (pydantic)
+ ├─ handlers/              # Aiogram-роутеры
+ │  ├─ start.py            # Команда /start и главное меню
+ │  ├─ search_by_name.py   # Поиск по названию
+ │  ├─ search_by_preferences.py  # Поиск по предпочтениям (FSM)
+ │  └─ report.py           # Отчёты об ошибках
+ ├─ services/              # Бизнес-логика
+ │  ├─ search_service.py   # Сервис поиска через TMDB
+ │  ├─ gemini_client.py    # Клиент Google Gemini API (REST)
+ │  └─ mood_ranker.py      # Ранжирование результатов по настроению
  ├─ tmdb_client.py         # Асинхронный клиент TMDB + форматирование результатов
- ├─ utils/formatters.py    # Сообщения и inline-клавиатуры
+ ├─ utils/
+ │  └─ formatters.py       # Сообщения и inline-клавиатуры
  └─ states.py              # FSM-состояния для aiogram
 ```
 
@@ -43,6 +51,8 @@ pip install -r requirements.txt
 |---------------------|-------------|------------|
 | `BOT_TOKEN`         | да          | Токен Telegram-бота (BotFather) |
 | `TMDB_API_KEY`      | да          | API ключ TMDB (https://www.themoviedb.org) |
+| `WEBHOOK_BASE_URL`  | да          | Базовый URL для webhook (например, `https://yourdomain.com`) |
+| `WEBHOOK_PATH`      | да          | Путь для webhook (например, `/webhook` или `/bot`) |
 | `GEMINI_API_KEY`    | нет         | Ключ Google Gemini; если отсутствует — ранжирование по настроению будет пропущено |
 | `REPORTS_CHAT_ID`   | нет         | ID чата/канала для отчётов об ошибках (можно оставить 0) |
 
@@ -50,7 +60,9 @@ pip install -r requirements.txt
 ```bash
 python bot/main.py
 ```
-После старта бот начнёт polling и будет ждать команды `/start`.
+После старта бот запустит webhook-сервер на указанном порту (по умолчанию 8080) и установит webhook по адресу `WEBHOOK_BASE_URL + WEBHOOK_PATH`. Убедитесь, что ваш сервер доступен извне и может принимать POST-запросы от Telegram.
+
+**Примечание**: Для локальной разработки можно использовать polling-режим, но текущая реализация использует webhook.
 
 ## Сценарии использования
 - **Поиск по названию**: нажмите «Найти по названию» → отправьте часть или полное название → листайте результаты кнопками ◀️ ▶️ → «Завершить поиск» покажет доступные сервисы.
