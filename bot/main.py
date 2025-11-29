@@ -30,7 +30,7 @@ async def on_shutdown(bot: Bot):
 def create_app():
     app = web.Application()
     SimpleRequestHandler(dp, bot).register(app, path=WEBHOOK_PATH)
-    setup_application(app, dp, bot=bot)
+    setup_application(app, dp, bot=bot, on_startup=[on_startup], on_shutdown=[on_shutdown])
     return app
 
 
